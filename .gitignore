@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+.env
+
+# macOS
+.DS_Store
+
+# RAG artifacts (do NOT commit)
+storage/
+*.sqlite3
+
+# Private data (do NOT commit)
+data/*.pdf
