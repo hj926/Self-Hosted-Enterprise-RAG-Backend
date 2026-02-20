@@ -1,30 +1,32 @@
-import os
-from langchain_community.document_loaders import PyPDFLoader
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_community.vectorstores import Chroma
-from langchain_ollama import OllamaEmbeddings
+from __future__ import annotations
 
-PDF_PATH = os.getenv("PDF_PATH", "data/sample.pdf")
-PERSIST_DIR = os.getenv("CHROMA_DIR", "storage/chroma")
-COLLECTION = os.getenv("CHROMA_COLLECTION", "pdf_rag")
+import argparse
+from pathlib import Path
 
-def ingest(pdf_path: str = PDF_PATH):
-    loader = PyPDFLoader(pdf_path)
-    docs = loader.load()
+from .config import RagSettings
+from .rag_engine import RagEngine
 
-    splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
-    chunks = splitter.split_documents(docs)
 
-    embeddings = OllamaEmbeddings(model="nomic-embed-text")
+def main():
+    p = argparse.ArgumentParser()
+    p.add_argument("--pdf", required=True)
+    args = p.parse_args()
 
-    vectordb = Chroma.from_documents(
-        documents=chunks,
-        embedding=embeddings,
-        persist_directory=PERSIST_DIR,
-        collection_name=COLLECTION,
+    settings = RagSettings()
+    engine = RagEngine(settings)
+
+    pdf_path = Path(args.pdf)
+    data = pdf_path.read_bytes()
+    rec = engine.ingest_pdf(data, filename=pdf_path.name)
+    print(
+        {
+            "doc_id": rec.doc_id,
+            "filename": rec.filename,
+            "uploaded_at": rec.uploaded_at,
+            "chunk_count": len(rec.chunk_ids),
+        }
     )
-    vectordb.persist()
-    print(f"Ingested {len(chunks)} chunks into Chroma at {PERSIST_DIR}")
+
 
 if __name__ == "__main__":
-    ingest()
+    main()

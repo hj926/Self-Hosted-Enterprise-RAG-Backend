@@ -1,0 +1,51 @@
+server:
+  port: 8080
+  error:
+    include-message: always
+    include-binding-errors: always
+    include-stacktrace: always
+
+spring:
+  datasource:
+    url: jdbc:h2:mem:backend;DB_CLOSE_DELAY=-1
+    driverClassName: org.h2.Driver
+    username: sa
+    password:
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+
+  servlet:
+    multipart:
+      max-file-size: 25MB
+      max-request-size: 25MB
+
+logging:
+  level:
+    root: INFO
+    "org.springframework.web": DEBUG
+    "org.springframework.web.servlet.DispatcherServlet": DEBUG
+    "org.springframework.security": DEBUG
+    "org.hibernate.SQL": DEBUG
+    "org.hibernate.orm.jdbc.bind": TRACE
+
+backend:
+  ragBaseUrl: http://rag-service:8000
+  apiKeyHeader: X-API-Key
+  requestIdHeader: X-Request-ID
+
+  auth:
+    keys:
+      - key: dev-key-1
+        tenantId: tenantA
+      - key: dev-key-2
+        tenantId: tenantB
+
+  http:
+    timeoutMs: 60000
+
+  ingest:
+    pollIntervalMs: 1000
+    maxConcurrent: 2

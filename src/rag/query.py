@@ -1,47 +1,25 @@
-import os
-from langchain_community.vectorstores import Chroma
-from langchain_ollama import OllamaEmbeddings, OllamaLLM
+from __future__ import annotations
 
-PERSIST_DIR = os.getenv("CHROMA_DIR", "storage/chroma")
-COLLECTION = os.getenv("CHROMA_COLLECTION", "pdf_rag")
-LLM_MODEL = os.getenv("OLLAMA_LLM", "llama3.2:3b")
+import argparse
 
-def ask(question: str, k: int = 4):
-    embeddings = OllamaEmbeddings(model="nomic-embed-text")
-    vectordb = Chroma(
-        persist_directory=PERSIST_DIR,
-        embedding_function=embeddings,
-        collection_name=COLLECTION,
-    )
+from .config import RagSettings
+from .rag_engine import RagEngine
 
-    docs = vectordb.similarity_search(question, k=k)
 
-    context_blocks = []
-    for i, d in enumerate(docs, 1):
-        src = d.metadata.get("source")
-        page = d.metadata.get("page")
-        context_blocks.append(f"[{i}] (source={src}, page={page})\n{d.page_content}")
+def main():
+    p = argparse.ArgumentParser()
+    p.add_argument("--q", required=True)
+    p.add_argument("--doc_id", default=None)
+    args = p.parse_args()
 
-    context = "\n\n".join(context_blocks)
+    settings = RagSettings()
+    engine = RagEngine(settings)
 
-    prompt = f"""You are a helpful assistant. Use the provided context to answer the question.
-If the context is insufficient, say you don't know.
+    res = engine.query(question=args.q, doc_id=args.doc_id)
+    print(res.answer)
+    for c in res.citations:
+        print({"doc_id": c.doc_id, "page": c.page, "snippet": c.snippet[:120]})
 
-Question:
-{question}
-
-Context:
-{context}
-
-Answer:"""
-
-    llm = OllamaLLM(model=LLM_MODEL)
-    answer = llm.invoke(prompt)
-
-    print("\n=== Answer ===\n", answer)
-    print("\n=== Sources ===")
-    for i, d in enumerate(docs, 1):
-        print(f"[{i}] source={d.metadata.get('source')} page={d.metadata.get('page')}")
 
 if __name__ == "__main__":
-    ask("Summarize the key points of this PDF in 5 bullets.")
+    main()

@@ -1,49 +1,133 @@
-# Python
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-*.log
+########################################
+# OS files
+########################################
 
-# Virtual environments
-.venv/
-.env
-env/
-venv/
-
-# macOS
 .DS_Store
+Thumbs.db
 
-# VS Code
+########################################
+# IDE files
+########################################
+
+.idea/
 .vscode/
+*.iml
 
-# RAG artifacts (do NOT commit)
-storage/
-*.sqlite3
+########################################
+# Logs
+########################################
 
-# Private data (do NOT commit)
-data/*.pdf
+*.log
+logs/
+*.out
 
-# Temporary files
-*.tmp
-*.bak
+########################################
+# Environment variables (SENSITIVE)
+########################################
+
+.env
+.env.*
+!.env.example
+
+########################################
 # Python
+########################################
+
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
+
 .venv/
-.env
+venv/
+env/
 
-# macOS
-.DS_Store
+########################################
+# Python build / packaging
+########################################
 
-# RAG artifacts (do NOT commit)
-storage/
-*.sqlite3
+build/
+dist/
+*.egg-info/
 
-# Private data (do NOT commit)
+########################################
+# Chroma vector DB (VERY IMPORTANT)
+########################################
+
+storage/chroma/
+storage/chroma/*
+
+########################################
+# Registry runtime data
+########################################
+
+storage/registry.json
+
+########################################
+# Uploaded documents
+########################################
+
 data/*.pdf
+data/*.docx
+data/*.txt
 
-.ipynb_checkpoints/
+########################################
+# Spring Boot / Java
+########################################
 
+target/
+*.class
+
+########################################
+# Maven wrapper (keep wrapper, ignore binaries)
+########################################
+
+.mvn/wrapper/maven-wrapper.jar
+
+########################################
+# H2 database files
+########################################
+
+*.mv.db
+*.trace.db
+
+########################################
+# Docker volumes / runtime
+########################################
+
+infra/ollama/
+infra/chroma/
+
+########################################
+# Ollama models (VERY LARGE)
+########################################
+
+*.bin
+*.gguf
+
+########################################
+# Temporary files
+########################################
+
+tmp/
+temp/
+
+########################################
+# Mac specific
+########################################
+
+.AppleDouble
+.LSOverride
+
+########################################
+# Ignore compiled frontend if added later
+########################################
+
+node_modules/
+build/
+
+########################################
+# Ignore secrets
+########################################
+
+secrets/

@@ -1,250 +1,241 @@
-import os
-import re
-import time
+from __future__ import annotations
+
+import hashlib
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple, Set
+from typing import Any, Optional
 
-from langchain_community.document_loaders import PyPDFLoader
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_community.vectorstores import Chroma
-from langchain_ollama import OllamaEmbeddings, OllamaLLM
+from .config import RagSettings
+from .errors import GuardrailViolationError
+from .llm_client import OllamaClient
+from .pdf_loader import load_pdf_pages
+from .registry import DocumentRegistry, DocumentRecord
+from .telemetry import Timer, Timings
+from .vectorstore import ChromaVectorStore, RetrievedChunk, mmr_select
 
 
-_CIT_RE = re.compile(r"\[\d+\]")
-
-
-@dataclass
-class SourceChunk:
-    idx: int
-    source: Optional[str]
-    page: Optional[int]
+@dataclass(frozen=True)
+class Citation:
+    doc_id: str
+    filename: str
+    page: int
     snippet: str
-    doc_id: Optional[str]
-    filename: Optional[str]
+    chunk_id: str
 
 
-class RAGEngine:
-    def __init__(
-        self,
-        chroma_dir: str = "storage/chroma",
-        collection: str = "pdf_rag",
-        embedding_model: str = "nomic-embed-text",
-        llm_model: str = "llama3.2:3b",
-        chunk_size: int = 1000,
-        chunk_overlap: int = 150,
-        strict_rag: bool = True,
-    ):
-        self.chroma_dir = chroma_dir
-        self.collection = collection
-        self.embedding_model = embedding_model
-        self.llm_model = llm_model
-        self.chunk_size = chunk_size
-        self.chunk_overlap = chunk_overlap
-        self.strict_rag = strict_rag
+@dataclass(frozen=True)
+class QueryResult:
+    answer: str
+    citations: list[Citation]
+    retrieved_count: int
+    timings: dict[str, float]
 
-        self.embeddings = OllamaEmbeddings(model=self.embedding_model)
-        self.llm = OllamaLLM(model=self.llm_model)
 
-    def _open_db(self) -> Chroma:
-        return Chroma(
-            persist_directory=self.chroma_dir,
-            embedding_function=self.embeddings,
-            collection_name=self.collection,
+class RagEngine:
+    def __init__(self, settings: RagSettings):
+        self.settings = settings
+        self.registry = DocumentRegistry(settings.rag_registry_path)
+        self.ollama = OllamaClient(
+            settings.ollama_base_url, settings.http_timeout_seconds
         )
+        self.vs = ChromaVectorStore(settings.rag_chroma_dir)
 
-    def ingest_pdf(self, pdf_path: str) -> Dict[str, Any]:
-        doc_id = str(uuid.uuid4())
+    def health_probe(self) -> dict[str, Any]:
+        self.ollama.health_probe()
+        _ = self.ollama.embed(self.settings.ollama_embed_model, "health-check")
+        _ = self.ollama.generate(
+            self.settings.ollama_llm_model,
+            "Reply with: OK",
+            temperature=0.0,
+            max_tokens=16,
+        )
+        return {"status": "ok"}
+
+    def ingest_pdf(self, pdf_bytes: bytes, filename: str) -> DocumentRecord:
+        t_total = Timer()
+        pages = load_pdf_pages(pdf_bytes, filename=filename)
+
+        doc_id = uuid.uuid4().hex
         uploaded_at = datetime.now(timezone.utc).isoformat()
-        filename = os.path.basename(pdf_path)
 
-        loader = PyPDFLoader(pdf_path)
-        docs = loader.load()
-
-        splitter = RecursiveCharacterTextSplitter(
-            chunk_size=self.chunk_size,
-            chunk_overlap=self.chunk_overlap,
-        )
-        chunks = splitter.split_documents(docs)
-
-        for d in chunks:
-            d.metadata["doc_id"] = doc_id
-            d.metadata["filename"] = filename
-            d.metadata["uploaded_at"] = uploaded_at
-
-        vectordb = Chroma.from_documents(
-            documents=chunks,
-            embedding=self.embeddings,
-            persist_directory=self.chroma_dir,
-            collection_name=self.collection,
-        )
-        vectordb.persist()
-
-        return {
-            "doc_id": doc_id,
-            "filename": filename,
-            "uploaded_at": uploaded_at,
-            "chunks": len(chunks),
-            "pdf_path": pdf_path,
-        }
-
-    def _build_prompt(self, question: str, context: str) -> str:
-        return f"""You are a helpful assistant. Answer using ONLY the provided context.
-Rules:
-- Do NOT use outside knowledge.
-- Every non-trivial claim MUST be backed by citations like [1], [2], etc.
-- If the context is insufficient, reply exactly: "I don't know based on the provided document."
-- Do NOT say "generally accepted" or similar phrases that imply outside knowledge.
-- Keep the answer concise and factual.
-
-Question:
-{question}
-
-Context:
-{context}
-
-Answer (with citations):"""
-
-    def query(
-        self, question: str, top_k: int = 4, doc_id: Optional[str] = None
-    ) -> Dict[str, Any]:
-        t0 = time.perf_counter()
-        db = self._open_db()
-
-        fetch_k = max(10, top_k * 3)
-
-        if doc_id:
-            docs = db.max_marginal_relevance_search(
-                question,
-                k=top_k,
-                fetch_k=fetch_k,
-                filter={"doc_id": doc_id},
-            )
-        else:
-            docs = db.max_marginal_relevance_search(
-                question,
-                k=top_k,
-                fetch_k=fetch_k,
-            )
-
-        seen: Set[Tuple[Optional[str], Optional[int], str]] = set()
-        sources: List[SourceChunk] = []
-        context_blocks: List[str] = []
-
-        i = 0
-        for d in docs:
-            src = d.metadata.get("source")
-            page = d.metadata.get("page")
-            docid = d.metadata.get("doc_id")
-            filename = d.metadata.get("filename")
-
-            text = (d.page_content or "").strip()
-            if not text:
-                continue
-
-            key = (src, page, text[:200])
-            if key in seen:
-                continue
-            seen.add(key)
-
-            i += 1
-            snippet = text[:400].replace("\n", " ")
-            sources.append(SourceChunk(i, src, page, snippet, docid, filename))
-            context_blocks.append(
-                f"[{i}] (source={src}, page={page}, doc_id={docid})\n{text}"
-            )
-
-            if i >= top_k:
-                break
-
-        if not context_blocks:
-            return {
-                "question": question,
-                "answer": "I don't know based on the provided document.",
-                "sources": [],
-                "meta": {
-                    "retrieved": 0,
-                    "latency_ms": int((time.perf_counter() - t0) * 1000),
-                },
-            }
-
-        context = "\n\n".join(context_blocks)
-        prompt = self._build_prompt(question, context)
-        answer = self.llm.invoke(prompt).strip()
-
-        if self.strict_rag:
-            if (
-                answer != "I don't know based on the provided document."
-                and not _CIT_RE.search(answer)
+        chunks: list[dict[str, Any]] = []
+        for p in pages:
+            for c in chunk_text(
+                p.text, self.settings.rag_chunk_size, self.settings.rag_chunk_overlap
             ):
-                answer = "I don't know based on the provided document."
+                chunks.append({"page": p.page, "text": c})
 
-        return {
-            "question": question,
-            "answer": answer,
-            "sources": [s.__dict__ for s in sources],
-            "meta": {
-                "retrieved": len(sources),
-                "latency_ms": int((time.perf_counter() - t0) * 1000),
-            },
-        }
+        ids: list[str] = []
+        docs: list[str] = []
+        metas: list[dict[str, Any]] = []
+        embs: list[list[float]] = []
 
-    def delete_by_doc_id(self, doc_id: str) -> int:
-        db = self._open_db()
-        col = getattr(db, "_collection", None)
-        if col is None:
-            return 0
+        timer_embed = Timer()
+        for idx, ch in enumerate(chunks):
+            chunk_id = make_chunk_id(doc_id, idx, ch["text"])
+            ids.append(chunk_id)
+            docs.append(ch["text"])
+            metas.append(
+                {
+                    "doc_id": doc_id,
+                    "filename": filename,
+                    "uploaded_at": uploaded_at,
+                    "page": int(ch["page"]),
+                }
+            )
+            embs.append(self.ollama.embed(self.settings.ollama_embed_model, ch["text"]))
+        embed_ms = timer_embed.ms()
 
-        deleted = 0
-        try:
-            matches = col.get(where={"doc_id": doc_id}, include=[])
-            ids = matches.get("ids", []) if isinstance(matches, dict) else []
-            if ids:
-                col.delete(ids=ids)
-                deleted = len(ids)
-            else:
-                deleted = 0
-        except Exception:
-            try:
-                col.delete(where={"doc_id": doc_id})
-                deleted = -1
-            except Exception:
-                deleted = 0
+        timer_vs = Timer()
+        self.vs.add(ids=ids, embeddings=embs, documents=docs, metadatas=metas)
+        vs_ms = timer_vs.ms()
 
-        try:
-            db.persist()
-        except Exception:
-            pass
+        rec = self.registry.upsert(doc_id=doc_id, filename=filename, chunk_ids=ids)
+        _ = t_total.ms()
 
+        return rec
+
+    def delete_document(self, doc_id: str) -> DocumentRecord:
+        rec = self.registry.get(doc_id)
+        if rec.chunk_ids:
+            self.vs.delete(rec.chunk_ids)
+        deleted = self.registry.delete(doc_id)
         return deleted
 
-    def ollama_probe(self) -> Dict[str, Any]:
-        """
-        Performs a minimal real-call probe against Ollama for embeddings and LLM.
-        Returns a dict with ok flags and latency metrics.
-        """
-        result: Dict[str, Any] = {
-            "embed_ok": False,
-            "llm_ok": False,
-            "embed_ms": None,
-            "llm_ms": None,
-        }
+    def list_documents(self) -> list[DocumentRecord]:
+        return self.registry.list()
 
-        try:
-            t0 = time.perf_counter()
-            v = self.embeddings.embed_query("healthcheck")
-            result["embed_ms"] = int((time.perf_counter() - t0) * 1000)
-            result["embed_ok"] = isinstance(v, list) and len(v) > 0
-        except Exception:
-            result["embed_ok"] = False
+    def get_document(self, doc_id: str) -> DocumentRecord:
+        return self.registry.get(doc_id)
 
-        try:
-            t0 = time.perf_counter()
-            out = self.llm.invoke("Reply with exactly: OK").strip()
-            result["llm_ms"] = int((time.perf_counter() - t0) * 1000)
-            result["llm_ok"] = out == "OK"
-        except Exception:
-            result["llm_ok"] = False
+    def query(
+        self,
+        question: str,
+        doc_id: Optional[str] = None,
+        top_k: Optional[int] = None,
+    ) -> QueryResult:
+        timings: dict[str, float] = {}
 
-        return result
+        t_embed = Timer()
+        q_emb = self.ollama.embed(self.settings.ollama_embed_model, question)
+        timings["embed_ms"] = t_embed.ms()
+
+        where = {"doc_id": doc_id} if doc_id else None
+        raw_top_k = int(top_k or self.settings.rag_top_k)
+
+        t_retrieve = Timer()
+        candidates = self.vs.query(
+            query_embedding=q_emb, top_k=max(raw_top_k * 2, raw_top_k), where=where
+        )
+        selected = mmr_select(
+            candidates, k=raw_top_k, lambda_mult=self.settings.rag_mmr_lambda
+        )
+        selected = dedupe_sources(selected)
+        timings["retrieve_ms"] = t_retrieve.ms()
+
+        citations = build_citations(selected)
+
+        if self.settings.strict_rag:
+            if len(selected) == 0:
+                raise GuardrailViolationError("Insufficient context for strict RAG")
+            if len(citations) == 0:
+                raise GuardrailViolationError("Citations missing under strict RAG")
+
+        prompt = build_prompt(question, citations, strict=self.settings.strict_rag)
+
+        t_gen = Timer()
+        answer = self.ollama.generate(
+            self.settings.ollama_llm_model,
+            prompt,
+            temperature=self.settings.llm_temperature,
+            max_tokens=self.settings.llm_max_tokens,
+        )
+        timings["generate_ms"] = t_gen.ms()
+
+        if self.settings.strict_rag and len(citations) == 0:
+            raise GuardrailViolationError(
+                "Answer produced without citations under strict RAG"
+            )
+
+        return QueryResult(
+            answer=answer.strip(),
+            citations=citations,
+            retrieved_count=len(selected),
+            timings=timings,
+        )
+
+
+def chunk_text(text: str, chunk_size: int, overlap: int) -> list[str]:
+    t = (text or "").strip()
+    if not t:
+        return []
+    chunks: list[str] = []
+    start = 0
+    n = len(t)
+    while start < n:
+        end = min(n, start + chunk_size)
+        chunks.append(t[start:end])
+        if end == n:
+            break
+        start = max(0, end - overlap)
+    return chunks
+
+
+def make_chunk_id(doc_id: str, idx: int, text: str) -> str:
+    h = hashlib.sha1(text.encode("utf-8")).hexdigest()[:10]
+    return f"{doc_id}:{idx}:{h}"
+
+
+def dedupe_sources(chunks: list[RetrievedChunk]) -> list[RetrievedChunk]:
+    seen = set()
+    out: list[RetrievedChunk] = []
+    for c in chunks:
+        key = (c.metadata.get("doc_id"), c.metadata.get("page"), c.text[:80])
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(c)
+    return out
+
+
+def build_citations(chunks: list[RetrievedChunk]) -> list[Citation]:
+    out: list[Citation] = []
+    for c in chunks:
+        meta = c.metadata or {}
+        doc_id = str(meta.get("doc_id", ""))
+        filename = str(meta.get("filename", ""))
+        page = int(meta.get("page", 0) or 0)
+        snippet = (c.text or "").strip().replace("\n", " ")
+        snippet = snippet[:240]
+        out.append(
+            Citation(
+                doc_id=doc_id,
+                filename=filename,
+                page=page,
+                snippet=snippet,
+                chunk_id=c.chunk_id,
+            )
+        )
+    return out
+
+
+def build_prompt(question: str, citations: list[Citation], strict: bool) -> str:
+    ctx_lines = []
+    for i, cit in enumerate(citations, start=1):
+        ctx_lines.append(f"[{i}] (doc_id={cit.doc_id}, page={cit.page}) {cit.snippet}")
+
+    context = "\n".join(ctx_lines)
+    policy = (
+        "You must answer only using the provided context. "
+        "If the context is insufficient, reply exactly: I don't know based on the provided document."
+        if strict
+        else "Answer using the provided context as primary evidence."
+    )
+
+    return (
+        f"{policy}\n\n"
+        f"Context:\n{context}\n\n"
+        f"Question:\n{question}\n\n"
+        f"Answer:"
+    )

@@ -1,46 +1,97 @@
+from __future__ import annotations
+
 import json
 import os
-from typing import Any, Dict, List, Optional
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Any, Optional
+
+from .errors import DocumentNotFoundError
+
+
+@dataclass(frozen=True)
+class DocumentRecord:
+    doc_id: str
+    filename: str
+    uploaded_at: str
+    chunk_ids: list[str]
 
 
 class DocumentRegistry:
-    def __init__(self, path: str = "storage/registry.json"):
-        self.path = path
-        os.makedirs(os.path.dirname(self.path), exist_ok=True)
+    def __init__(self, registry_path: str):
+        self.registry_path = registry_path
+        os.makedirs(os.path.dirname(registry_path) or ".", exist_ok=True)
+        if not os.path.exists(self.registry_path):
+            self._write({"documents": {}})
 
-    def _read_all(self) -> Dict[str, Dict[str, Any]]:
-        if not os.path.exists(self.path):
-            return {}
-        with open(self.path, "r", encoding="utf-8") as f:
+    def list(self) -> list[DocumentRecord]:
+        data = self._read()
+        docs = data.get("documents", {})
+        out: list[DocumentRecord] = []
+        for doc_id, v in docs.items():
+            out.append(
+                DocumentRecord(
+                    doc_id=doc_id,
+                    filename=v["filename"],
+                    uploaded_at=v["uploaded_at"],
+                    chunk_ids=list(v.get("chunk_ids", [])),
+                )
+            )
+        out.sort(key=lambda r: r.uploaded_at, reverse=True)
+        return out
+
+    def get(self, doc_id: str) -> DocumentRecord:
+        data = self._read()
+        docs = data.get("documents", {})
+        if doc_id not in docs:
+            raise DocumentNotFoundError(doc_id)
+        v = docs[doc_id]
+        return DocumentRecord(
+            doc_id=doc_id,
+            filename=v["filename"],
+            uploaded_at=v["uploaded_at"],
+            chunk_ids=list(v.get("chunk_ids", [])),
+        )
+
+    def upsert(
+        self, doc_id: str, filename: str, chunk_ids: list[str]
+    ) -> DocumentRecord:
+        data = self._read()
+        docs = data.setdefault("documents", {})
+        uploaded_at = datetime.now(timezone.utc).isoformat()
+        docs[doc_id] = {
+            "filename": filename,
+            "uploaded_at": uploaded_at,
+            "chunk_ids": chunk_ids,
+        }
+        self._write(data)
+        return DocumentRecord(
+            doc_id=doc_id,
+            filename=filename,
+            uploaded_at=uploaded_at,
+            chunk_ids=chunk_ids,
+        )
+
+    def delete(self, doc_id: str) -> DocumentRecord:
+        data = self._read()
+        docs = data.get("documents", {})
+        if doc_id not in docs:
+            raise DocumentNotFoundError(doc_id)
+        v = docs.pop(doc_id)
+        self._write(data)
+        return DocumentRecord(
+            doc_id=doc_id,
+            filename=v["filename"],
+            uploaded_at=v["uploaded_at"],
+            chunk_ids=list(v.get("chunk_ids", [])),
+        )
+
+    def _read(self) -> dict[str, Any]:
+        with open(self.registry_path, "r", encoding="utf-8") as f:
             return json.load(f)
 
-    def _write_all(self, data: Dict[str, Dict[str, Any]]) -> None:
-        tmp = self.path + ".tmp"
+    def _write(self, data: dict[str, Any]) -> None:
+        tmp = self.registry_path + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
-        os.replace(tmp, self.path)
-
-    def upsert(self, doc_id: str, record: Dict[str, Any]) -> None:
-        data = self._read_all()
-        data[doc_id] = record
-        self._write_all(data)
-
-    def get(self, doc_id: str) -> Optional[Dict[str, Any]]:
-        data = self._read_all()
-        return data.get(doc_id)
-
-    def list(self) -> List[Dict[str, Any]]:
-        data = self._read_all()
-        items = []
-        for doc_id, rec in data.items():
-            items.append({"doc_id": doc_id, **rec})
-        items.sort(key=lambda x: x.get("uploaded_at", ""), reverse=True)
-        return items
-
-    def delete(self, doc_id: str) -> bool:
-        data = self._read_all()
-        if doc_id not in data:
-            return False
-        del data[doc_id]
-        self._write_all(data)
-        return True
+        os.replace(tmp, self.registry_path)
