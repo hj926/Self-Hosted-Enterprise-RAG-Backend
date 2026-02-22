@@ -70,3 +70,12 @@ class GuardrailViolationError(RagError):
             http_status=422,
             details={"reason": reason},
         )
+
+
+class TenantRequiredError(RagError):
+    def __init__(self):
+        super().__init__(
+            error_code="TENANT_REQUIRED",
+            message="Missing X-Tenant-ID header",
+            http_status=400,
+        )

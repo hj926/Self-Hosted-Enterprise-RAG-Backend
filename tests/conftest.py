@@ -28,4 +28,7 @@ def temp_storage(monkeypatch):
 
 @pytest.fixture()
 def client(temp_storage):
-    return TestClient(app)
+
+    c = TestClient(app)
+    c.headers.update({"X-Tenant-ID": "test"})
+    return c

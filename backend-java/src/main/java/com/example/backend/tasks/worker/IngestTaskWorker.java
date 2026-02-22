@@ -43,7 +43,7 @@ public class IngestTaskWorker {
         t.setStatus(IngestTaskEntity.Status.RUNNING);
         repo.save(t);
 
-        String docId = ingestToRag(t.getFilename(), t.getFileBytes());
+        String docId = ingestToRag(t.getTenantId(), t.getFilename(), t.getFileBytes());
 
         t.setDocId(docId);
         t.setErrorCode(null);
@@ -60,7 +60,8 @@ public class IngestTaskWorker {
     }
   }
 
-  private String ingestToRag(String filename, byte[] fileBytes) throws Exception {
+  // ✅ 修改：方法签名增加 tenantId 参数
+  private String ingestToRag(String tenantId, String filename, byte[] fileBytes) throws Exception {
     String base = cfg.getRagBaseUrl();
     if (base == null || base.isBlank())
       throw new IllegalStateException("backend.ragBaseUrl is empty");
@@ -74,6 +75,7 @@ public class IngestTaskWorker {
         .timeout(Duration.ofMinutes(5))
         .header("Content-Type", "multipart/form-data; boundary=" + boundary)
         .header("Accept", "application/json")
+        .header(cfg.getTenantHeader(), tenantId) // ✅ 新增：添加租户 Header
         .POST(HttpRequest.BodyPublishers.ofByteArray(body))
         .build();
 

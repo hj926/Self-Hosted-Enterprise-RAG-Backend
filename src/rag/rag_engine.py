@@ -7,11 +7,10 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from .config import RagSettings
-from .errors import GuardrailViolationError
 from .llm_client import OllamaClient
 from .pdf_loader import load_pdf_pages
 from .registry import DocumentRegistry, DocumentRecord
-from .telemetry import Timer, Timings
+from .telemetry import Timer
 from .vectorstore import ChromaVectorStore, RetrievedChunk, mmr_select
 
 
@@ -33,13 +32,21 @@ class QueryResult:
 
 
 class RagEngine:
-    def __init__(self, settings: RagSettings):
+    def __init__(
+        self,
+        settings: RagSettings,
+        chroma_dir: str | None = None,
+        registry_path: str | None = None,
+    ):
         self.settings = settings
-        self.registry = DocumentRegistry(settings.rag_registry_path)
+        reg_path = registry_path or settings.rag_registry_path
+        chroma_path = chroma_dir or settings.rag_chroma_dir
+
+        self.registry = DocumentRegistry(reg_path)
         self.ollama = OllamaClient(
             settings.ollama_base_url, settings.http_timeout_seconds
         )
-        self.vs = ChromaVectorStore(settings.rag_chroma_dir)
+        self.vs = ChromaVectorStore(chroma_path)
 
     def health_probe(self) -> dict[str, Any]:
         self.ollama.health_probe()
@@ -53,7 +60,6 @@ class RagEngine:
         return {"status": "ok"}
 
     def ingest_pdf(self, pdf_bytes: bytes, filename: str) -> DocumentRecord:
-        t_total = Timer()
         pages = load_pdf_pages(pdf_bytes, filename=filename)
 
         doc_id = uuid.uuid4().hex
@@ -71,7 +77,6 @@ class RagEngine:
         metas: list[dict[str, Any]] = []
         embs: list[list[float]] = []
 
-        timer_embed = Timer()
         for idx, ch in enumerate(chunks):
             chunk_id = make_chunk_id(doc_id, idx, ch["text"])
             ids.append(chunk_id)
@@ -85,15 +90,9 @@ class RagEngine:
                 }
             )
             embs.append(self.ollama.embed(self.settings.ollama_embed_model, ch["text"]))
-        embed_ms = timer_embed.ms()
 
-        timer_vs = Timer()
         self.vs.add(ids=ids, embeddings=embs, documents=docs, metadatas=metas)
-        vs_ms = timer_vs.ms()
-
         rec = self.registry.upsert(doc_id=doc_id, filename=filename, chunk_ids=ids)
-        _ = t_total.ms()
-
         return rec
 
     def delete_document(self, doc_id: str) -> DocumentRecord:
@@ -117,6 +116,16 @@ class RagEngine:
     ) -> QueryResult:
         timings: dict[str, float] = {}
 
+        if self.settings.strict_rag and not doc_id:
+            docs = self.registry.list()
+            if len(docs) == 0:
+                return QueryResult(
+                    answer="I don't know.",
+                    citations=[],
+                    retrieved_count=0,
+                    timings=timings,
+                )
+
         t_embed = Timer()
         q_emb = self.ollama.embed(self.settings.ollama_embed_model, question)
         timings["embed_ms"] = t_embed.ms()
@@ -136,11 +145,13 @@ class RagEngine:
 
         citations = build_citations(selected)
 
-        if self.settings.strict_rag:
-            if len(selected) == 0:
-                raise GuardrailViolationError("Insufficient context for strict RAG")
-            if len(citations) == 0:
-                raise GuardrailViolationError("Citations missing under strict RAG")
+        if self.settings.strict_rag and (len(selected) == 0 or len(citations) == 0):
+            return QueryResult(
+                answer="I don't know.",
+                citations=[],
+                retrieved_count=len(selected),
+                timings=timings,
+            )
 
         prompt = build_prompt(question, citations, strict=self.settings.strict_rag)
 
@@ -152,11 +163,6 @@ class RagEngine:
             max_tokens=self.settings.llm_max_tokens,
         )
         timings["generate_ms"] = t_gen.ms()
-
-        if self.settings.strict_rag and len(citations) == 0:
-            raise GuardrailViolationError(
-                "Answer produced without citations under strict RAG"
-            )
 
         return QueryResult(
             answer=answer.strip(),

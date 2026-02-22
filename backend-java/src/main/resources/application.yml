@@ -6,8 +6,14 @@ server:
     include-stacktrace: always
 
 spring:
+  mvc:
+    throw-exception-if-no-handler-found: true
+  web:
+    resources:
+      add-mappings: false
+
   datasource:
-    url: jdbc:h2:mem:backend;DB_CLOSE_DELAY=-1
+    url: jdbc:h2:file:/app/storage/h2/backend;AUTO_SERVER=TRUE
     driverClassName: org.h2.Driver
     username: sa
     password:
@@ -35,6 +41,7 @@ backend:
   ragBaseUrl: http://rag-service:8000
   apiKeyHeader: X-API-Key
   requestIdHeader: X-Request-ID
+  tenantHeader: X-Tenant-ID
 
   auth:
     keys:

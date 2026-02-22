@@ -2,6 +2,7 @@ package com.example.backend.security;
 
 import java.io.IOException;
 import java.util.Optional;
+import java.util.UUID;
 
 import com.example.backend.config.AppConfig;
 
@@ -35,11 +36,24 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
   protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
       throws ServletException, IOException {
 
-    String header = cfg.getApiKeyHeader();
-    String key = request.getHeader(header);
+    String requestIdHeader = cfg.getRequestIdHeader();
+    String requestId = request.getHeader(requestIdHeader);
+
+    if (requestId == null || requestId.isBlank()) {
+      requestId = UUID.randomUUID().toString().replace("-", "");
+    }
+
+    response.setHeader(requestIdHeader, requestId);
+
+    request.setAttribute("request_id", requestId);
+    request.setAttribute("requestId", requestId);
+
+    String apiKeyHeader = cfg.getApiKeyHeader();
+    String key = request.getHeader(apiKeyHeader);
 
     if (key == null || key.isBlank()) {
-      writeJson(response, 401, "{\"error\":\"UNAUTHORIZED\",\"message\":\"Missing API key\"}");
+      writeJson(response, 401,
+          "{\"request_id\":\"" + requestId + "\",\"error_code\":\"UNAUTHORIZED\",\"message\":\"Missing API key\"}");
       return;
     }
 
@@ -48,7 +62,8 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
         .findFirst();
 
     if (entry.isEmpty()) {
-      writeJson(response, 401, "{\"error\":\"UNAUTHORIZED\",\"message\":\"Invalid API key\"}");
+      writeJson(response, 401,
+          "{\"request_id\":\"" + requestId + "\",\"error_code\":\"UNAUTHORIZED\",\"message\":\"Invalid API key\"}");
       return;
     }
 
@@ -62,6 +77,7 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
 
   private static void writeJson(HttpServletResponse response, int status, String body) throws IOException {
     response.setStatus(status);
+    response.setCharacterEncoding("UTF-8");
     response.setContentType(MediaType.APPLICATION_JSON_VALUE);
     response.getWriter().write(body);
   }

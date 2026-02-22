@@ -1,30 +1,30 @@
 ########################################
-# OS files
+# OS / macOS
 ########################################
-
 .DS_Store
-Thumbs.db
+.AppleDouble
+.LSOverride
+__MACOSX/
 
 ########################################
-# IDE files
+# IDE
 ########################################
-
 .idea/
 .vscode/
 *.iml
 
 ########################################
-# Logs
+# Logs / temp
 ########################################
-
 *.log
 logs/
 *.out
+tmp/
+temp/
 
 ########################################
-# Environment variables (SENSITIVE)
+# Env (SENSITIVE)
 ########################################
-
 .env
 .env.*
 !.env.example
@@ -32,102 +32,50 @@ logs/
 ########################################
 # Python
 ########################################
-
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
-
+*.py[cod]
 .venv/
 venv/
 env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
 ########################################
 # Python build / packaging
 ########################################
-
 build/
 dist/
 *.egg-info/
 
 ########################################
-# Chroma vector DB (VERY IMPORTANT)
+# Java / Spring / Maven
 ########################################
-
-storage/chroma/
-storage/chroma/*
-
-########################################
-# Registry runtime data
-########################################
-
-storage/registry.json
-
-########################################
-# Uploaded documents
-########################################
-
-data/*.pdf
-data/*.docx
-data/*.txt
-
-########################################
-# Spring Boot / Java
-########################################
-
-target/
+**/target/
 *.class
+*.jar
+*.war
+*.ear
+.classpath
+.project
+.settings/
 
 ########################################
-# Maven wrapper (keep wrapper, ignore binaries)
+# Runtime storage (DO NOT COMMIT)
+# docker-compose mounts ../storage -> /app/storage
 ########################################
-
-.mvn/wrapper/maven-wrapper.jar
-
-########################################
-# H2 database files
-########################################
-
-*.mv.db
-*.trace.db
+storage/**
+!storage/.gitkeep
 
 ########################################
-# Docker volumes / runtime
+# Uploaded documents / local fixtures
 ########################################
-
-infra/ollama/
-infra/chroma/
-
-########################################
-# Ollama models (VERY LARGE)
-########################################
-
-*.bin
-*.gguf
+# 默认不提交用户上传文件；但保留 demo 用的 sample.pdf
+data/*
+!data/sample.pdf
+!data/README.md
 
 ########################################
-# Temporary files
+# Secrets
 ########################################
-
-tmp/
-temp/
-
-########################################
-# Mac specific
-########################################
-
-.AppleDouble
-.LSOverride
-
-########################################
-# Ignore compiled frontend if added later
-########################################
-
-node_modules/
-build/
-
-########################################
-# Ignore secrets
-########################################
-
 secrets/
