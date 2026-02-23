@@ -24,6 +24,7 @@ import java.util.Map;
 
 @Component
 public class RagClient {
+
   private final WebClient webClient;
   private final AppConfig cfg;
 
@@ -33,11 +34,13 @@ public class RagClient {
   }
 
   private String getRequestId(HttpServletRequest req) {
-    return (String) req.getAttribute("requestId");
+    Object v = req.getAttribute("requestId");
+    return v == null ? "" : String.valueOf(v);
   }
 
   private String getTenantId() {
-    return TenantContext.getTenantId();
+    String t = TenantContext.getTenantId();
+    return t == null ? "" : t;
   }
 
   public Mono<Map<String, Object>> health(HttpServletRequest req) {

@@ -1,210 +1,175 @@
-# Self‑Hosted Enterprise RAG Backend System
+# Self-Hosted Enterprise RAG Backend System (Spring Boot + FastAPI + Ollama)
 
-## Overview
-
-This project implements a production‑style, self‑hosted Enterprise Retrieval‑Augmented Generation (RAG) backend system. It combines a Spring Boot backend, a FastAPI‑based Python AI microservice, a vector database, and Ollama‑hosted LLMs. The system is designed using enterprise microservice architecture principles, including asynchronous processing, service decomposition, and secure multi‑tenant access.
-
-The system enables users to upload documents, index them into a vector database, and perform grounded AI queries with citation support.
+> This repository implements a fully local, multi-service Retrieval-Augmented Generation (RAG) backend with a production-style Java API gateway and a Python RAG microservice.  
 
 ---
 
-## Architecture
+## 1. What you built
 
-Client
-  → Spring Boot Backend API
-  → Async Worker
-  → Python RAG Service (FastAPI)
-  → Ollama (Embedding + LLM)
-  → ChromaDB (Vector Database)
+**Core goals**
+- Run RAG end-to-end **locally** (no paid cloud services required).
+- Provide a **backend-grade API** with authentication, multi-tenant isolation, async tasks, and document management.
+- Keep storage **persistent** on disk and make the system verifiable with scripts + curl.
 
-Components:
+**Key features**
+- **Multi-service architecture** via Docker Compose:
+  - `backend-api` (Java Spring Boot, port **8080**)
+  - `rag-service` (Python FastAPI, port **8000**)
+  - `ollama` (LLM/embeddings, port **11434**)
+- **API-key authentication + tenant isolation**
+  - Headers: `X-API-Key` + `X-Tenant-ID`
+  - Different keys map to different tenants (tenantA/tenantB).
+- **Async ingest task pipeline**
+  - Upload PDF → create ingest task → worker calls RAG service → poll → update task status.
+  - Task tracking stored in **H2** (file-based, persistent).
+- **Document Management API (DB authoritative)**
+  - `GET /api/v1/documents` lists **READY** documents from DB.
+  - `GET /api/v1/documents/{docId}` returns DB metadata (+ best-effort `chunkCount` from RAG).
+  - `DELETE /api/v1/documents/{docId}` soft-deletes in DB and best-effort deletes vectors from RAG.
+- **Strict RAG mode**
+  - RAG service can be configured to answer with citations and avoid hallucinations when context is missing (`STRICT_RAG=true`).
 
-- Spring Boot Backend (Java)
-- FastAPI RAG Service (Python)
-- Ollama (LLM and Embedding Models)
-- ChromaDB (Vector Storage)
-- H2 Database (Task persistence)
-- Docker Compose Deployment
+## 2. Tech stack
+- **Java Backend**: Spring Boot, Spring Web, Spring Data JPA, H2 (file mode)
+- **Python RAG Service**: FastAPI, Pydantic, ChromaDB (local), PDF ingest + chunking + retrieval
+- **LLM/Embeddings**: Ollama (default models pulled on startup)
+- **Infra**: Docker Compose, Makefile, smoke test script
 
----
+## 3. Architecture
+Request flow (happy path):
 
-## Key Features
+1) Client uploads PDF to **backend-api**  
+2) backend creates an **ingest task** (persisted in H2)  
+3) worker sends PDF to **rag-service**  
+4) rag-service chunks + embeds + stores vectors (per-tenant storage)  
+5) worker marks task `SUCCEEDED` and **upserts document metadata** into `documents` table  
+6) user queries via backend; backend forwards to rag-service and returns **answer + citations**
 
-### Enterprise Backend (Spring Boot)
-
-- REST API layer
-- Multi‑tenant support via API keys
-- Asynchronous ingest task processing
-- Background worker polling
-- Task state tracking (PENDING, RUNNING, SUCCEEDED, FAILED)
-- H2 database persistence
-- Secure authentication filter
-
-### AI Service (FastAPI)
-
-- PDF ingestion pipeline
-- Text chunking
-- Embedding generation (nomic‑embed‑text)
-- Vector storage (ChromaDB)
-- Query pipeline with LLM (llama3.2:3b)
-- Citation‑based grounded answers
-- Hallucination prevention guardrails
-
-### Deployment
-
-- Docker‑based microservice orchestration
-- Independent backend, rag‑service, and Ollama containers
-- Fully self‑hosted environment
-
----
-
-## Project Structure
-
-Self‑Hosted‑Enterprise‑RAG‑Backend/
-│
-├── backend/                # Spring Boot backend
-│   ├── src/main/java/
-│   ├── src/main/resources/
-│   └── pom.xml
-│
-├── src/
-│   ├── api/                # FastAPI service
-│   │   └── main.py
-│   │
-│   └── rag/                # RAG pipeline logic
-│       ├── ingest.py
-│       ├── query.py
-│       ├── llm_client.py
-│       └── registry.py
-│
-├── storage/
-│   ├── chroma/             # Vector database (ignored in git)
-│   └── registry.json
-│
-├── infra/
-│   ├── docker-compose.yml
-│   ├── Dockerfile.backend
-│   └── Dockerfile.rag
-│
-├── data/
-│   └── sample.pdf
-│
-├── README.md
-├── .gitignore
-└── Makefile
-
----
-
-## API Endpoints
-
-Backend API:
-
-POST /api/v1/documents  
-Upload document and create ingest task
-
-GET /api/v1/tasks/{taskId}  
-Check ingest task status
-
-POST /api/v1/query  
-Query documents
-
-FastAPI RAG Service:
-
-POST /documents  
-Ingest document
-
-POST /query  
-Run query
-
-GET /health  
-Service health check
-
----
-
-## Task Lifecycle
-
-PENDING → RUNNING → SUCCEEDED / FAILED
-
----
-
-## Setup Instructions
-
-### 1. Start Docker
-
-docker compose -f infra/docker-compose.yml up --build
-
----
-
-### 2. Load Ollama Models
-
-docker compose exec ollama ollama pull llama3.2:3b
-
-docker compose exec ollama ollama pull nomic-embed-text
-
----
-
-### 3. Upload Document
-
-curl -H "X-API-Key: dev-key-1" \
--F "file=@data/sample.pdf" \
-http://localhost:8080/api/v1/documents
-
----
-
-### 4. Check Task
-
-curl -H "X-API-Key: dev-key-1" \
-http://localhost:8080/api/v1/tasks/{taskId}
-
----
-
-## Technologies Used
-
-Backend:
-- Java 21
-- Spring Boot 3
-- Spring Data JPA
-- H2 Database
-
-AI Service:
-- Python 3.12
-- FastAPI
-- ChromaDB
-- Ollama
-- httpx
-
-Deployment:
-- Docker
-- Docker Compose
-
-Models:
-- llama3.2:3b
-- nomic-embed-text
-
----
-
-## Enterprise Architecture Features
-
-- Microservice separation
-- Async task processing
-- Persistent task state tracking
-- Secure authentication
-- Vector database integration
-- Grounded AI responses
-- Fully self‑hosted deployment
-
----
-
-## Future Improvements
-
-- Retry logic
-- Monitoring integration
-- PostgreSQL support
-- Horizontal scaling
-- Distributed task queue
-
----
-
-## Author
-
-Enterprise RAG Backend System
+## 4. Project layout
+```text
+Self-Hosted-Enterprise-RAG-Backend/
+  backend-java/                 # Spring Boot backend
+    src/main/...                # controllers, services, worker, etc.
+    src/main/resources/application.yml
+  src/                          # Python rag-service package
+    api/                        # FastAPI routes (health, documents, query)
+    rag/                        # core RAG engine, clients, storage
+  infra/                        # Dockerfiles + docker-compose.yml
+  scripts/                      # smoke_test.sh (end-to-end verification)
+  data/                         # sample.pdf and other inputs
+  storage/                      # persistent data (H2 + per-tenant RAG storage)
+  Makefile
+  requirements.txt
+  pytest.ini
+  tests/
+```
+### Storage
+## 5. How to run
+### Prerequisites
+### Start (recommended)
+```bash
+make up
+```
+```bash
+make down
+```
+```bash
+make nuke
+```
+```bash
+make logs
+```
+### Health checks
+```bash
+curl -s http://127.0.0.1:8080/api/v1/health -H "X-API-Key: dev-key-1" | python -m json.tool
+```
+```bash
+curl -s http://127.0.0.1:8000/health | python -m json.tool
+```
+```bash
+curl -s http://127.0.0.1:11434/api/tags | python -m json.tool
+```
+## 6. Configuration
+### Backend configuration (Spring Boot)
+### RAG service configuration
+## 7. API usage & verification
+### 7.1 Upload PDF → taskId
+```bash
+curl -s -X POST "http://127.0.0.1:8080/api/v1/documents" \
+  -H "X-API-Key: dev-key-1" \
+  -H "X-Tenant-ID: tenantA" \
+  -F "file=@./data/sample.pdf;type=application/pdf" | python -m json.tool
+```
+```json
+{ "taskId": "..." }
+```
+### 7.2 Poll task → SUCCEEDED + docId
+```bash
+TASK_ID="paste_task_id_here"
+curl -s "http://127.0.0.1:8080/api/v1/tasks/$TASK_ID" \
+  -H "X-API-Key: dev-key-1" \
+  -H "X-Tenant-ID: tenantA" | python -m json.tool
+```
+### 7.3 List documents (DB authoritative)
+```bash
+curl -s "http://127.0.0.1:8080/api/v1/documents?page=0&size=20" \
+  -H "X-API-Key: dev-key-1" \
+  -H "X-Tenant-ID: tenantA" | python -m json.tool
+```
+### 7.4 Document detail
+```bash
+DOC_ID="paste_doc_id_here"
+curl -s "http://127.0.0.1:8080/api/v1/documents/$DOC_ID" \
+  -H "X-API-Key: dev-key-1" \
+  -H "X-Tenant-ID: tenantA" | python -m json.tool
+```
+### 7.5 Query (answer + citations)
+```bash
+curl -s -X POST "http://127.0.0.1:8080/api/v1/query" \
+  -H "X-API-Key: dev-key-1" \
+  -H "X-Tenant-ID: tenantA" \
+  -H "Content-Type: application/json" \
+  -d '{"question":"What is this document about? Answer briefly and cite sources.","top_k":3}' \
+  | python -m json.tool
+```
+### 7.6 Delete (soft delete in DB + delete vectors in RAG)
+```bash
+DOC_ID="paste_doc_id_here"
+curl -i -X DELETE "http://127.0.0.1:8080/api/v1/documents/$DOC_ID" \
+  -H "X-API-Key: dev-key-1" \
+  -H "X-Tenant-ID: tenantA"
+```
+### 7.7 Verify RAG-side deletion
+```bash
+curl -i "http://127.0.0.1:8000/documents/$DOC_ID" -H "X-Tenant-ID: tenantA"
+```
+```bash
+curl -i "http://127.0.0.1:8000/documents/$DOC_ID" -H "X-Tenant-ID: tenantA"
+```
+### 7.8 Tenant isolation check
+```bash
+curl -i "http://127.0.0.1:8080/api/v1/documents/$DOC_ID" \
+  -H "X-API-Key: dev-key-2" \
+  -H "X-Tenant-ID: tenantB"
+```
+## 8. Automated verification
+```bash
+make verify
+```
+```bash
+./scripts/smoke_test.sh
+```
+```bash
+BASE_URL=http://127.0.0.1:8080 API_KEY=dev-key-1 PDF_PATH=data/sample.pdf ./scripts/smoke_test.sh
+```
+## 9. Observability & troubleshooting
+### Logs
+```bash
+docker logs -f --tail=200 infra-backend-api-1
+docker logs -f --tail=200 infra-rag-service-1
+docker logs -f --tail=200 infra-ollama-1
+```
+### Common error patterns
+### Where is data stored?
+## 10. Roadmap ideas
+For educational

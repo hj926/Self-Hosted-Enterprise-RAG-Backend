@@ -30,52 +30,53 @@ temp/
 !.env.example
 
 ########################################
-# Python
-########################################
-__pycache__/
-*.py[cod]
-.venv/
-venv/
-env/
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-
-########################################
-# Python build / packaging
-########################################
-build/
-dist/
-*.egg-info/
-
-########################################
-# Java / Spring / Maven
+# Java / Maven / Gradle
 ########################################
 **/target/
 *.class
 *.jar
 *.war
 *.ear
-.classpath
-.project
-.settings/
 
 ########################################
-# Runtime storage (DO NOT COMMIT)
-# docker-compose mounts ../storage -> /app/storage
+# Python
 ########################################
-storage/**
-!storage/.gitkeep
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
 ########################################
-# Uploaded documents / local fixtures
+# Virtual environments
 ########################################
-# 默认不提交用户上传文件；但保留 demo 用的 sample.pdf
-data/*
-!data/sample.pdf
-!data/README.md
+.venv/
+venv/
+env/
 
 ########################################
-# Secrets
+# Local persistent storage (VERY IMPORTANT)
 ########################################
-secrets/
+storage/
+backend-java/storage/
+
+########################################
+# H2 database files (safety)
+########################################
+*.mv.db
+*.trace.db
+
+########################################
+# Archives / exports
+########################################
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+
+########################################
+# Docker overrides
+########################################
+docker-compose.override.yml

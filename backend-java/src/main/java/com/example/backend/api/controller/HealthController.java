@@ -6,6 +6,9 @@ import com.example.backend.ragclient.RagClient;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+
 import jakarta.servlet.http.HttpServletRequest;
 
 import org.springframework.web.bind.annotation.GetMapping;
@@ -15,6 +18,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/api/v1")
+@Tag(name = "Health", description = "Health checks (gateway + downstream rag-service)")
 public class HealthController {
 
   private final RagClient rag;
@@ -25,6 +29,7 @@ public class HealthController {
     this.cfg = cfg;
   }
 
+  @Operation(summary = "Health check", description = "Returns gateway status and downstream rag-service health. Use deep=true for deep checks.")
   @GetMapping("/health")
   public Map<String, Object> health(
       HttpServletRequest request,

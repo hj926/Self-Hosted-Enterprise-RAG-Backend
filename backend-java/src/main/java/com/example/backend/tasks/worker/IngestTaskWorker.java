@@ -1,6 +1,7 @@
 package com.example.backend.tasks.worker;
 
 import com.example.backend.config.AppConfig;
+import com.example.backend.documents.service.DocumentService;
 import com.example.backend.tasks.entity.IngestTaskEntity;
 import com.example.backend.tasks.repo.IngestTaskRepository;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -22,6 +23,7 @@ public class IngestTaskWorker {
 
   private final IngestTaskRepository repo;
   private final AppConfig cfg;
+  private final DocumentService documentService;
   private final ObjectMapper om = new ObjectMapper();
 
   private final HttpClient http = HttpClient.newBuilder()
@@ -29,9 +31,10 @@ public class IngestTaskWorker {
       .version(HttpClient.Version.HTTP_1_1)
       .build();
 
-  public IngestTaskWorker(IngestTaskRepository repo, AppConfig cfg) {
+  public IngestTaskWorker(IngestTaskRepository repo, AppConfig cfg, DocumentService documentService) {
     this.repo = repo;
     this.cfg = cfg;
+    this.documentService = documentService;
   }
 
   @Scheduled(fixedDelayString = "${backend.ingest.poll-interval-ms:1000}")
@@ -51,6 +54,12 @@ public class IngestTaskWorker {
         t.setStatus(IngestTaskEntity.Status.SUCCEEDED);
         repo.save(t);
 
+        documentService.upsertReadyDocument(
+            t.getTenantId(),
+            docId,
+            t.getFilename(),
+            t.getTaskId());
+
       } catch (Exception e) {
         t.setStatus(IngestTaskEntity.Status.FAILED);
         t.setErrorCode("RAG_INGEST_FAILED");
@@ -60,11 +69,11 @@ public class IngestTaskWorker {
     }
   }
 
-  // ✅ 修改：方法签名增加 tenantId 参数
   private String ingestToRag(String tenantId, String filename, byte[] fileBytes) throws Exception {
     String base = cfg.getRagBaseUrl();
-    if (base == null || base.isBlank())
+    if (base == null || base.isBlank()) {
       throw new IllegalStateException("backend.ragBaseUrl is empty");
+    }
     String url = base.endsWith("/") ? base + "documents" : base + "/documents";
 
     String boundary = "----Boundary" + UUID.randomUUID();
@@ -75,12 +84,11 @@ public class IngestTaskWorker {
         .timeout(Duration.ofMinutes(5))
         .header("Content-Type", "multipart/form-data; boundary=" + boundary)
         .header("Accept", "application/json")
-        .header(cfg.getTenantHeader(), tenantId) // ✅ 新增：添加租户 Header
+        .header(cfg.getTenantHeader(), tenantId)
         .POST(HttpRequest.BodyPublishers.ofByteArray(body))
         .build();
 
     HttpResponse<byte[]> resp = http.send(req, HttpResponse.BodyHandlers.ofByteArray());
-
     String text = resp.body() == null ? "" : new String(resp.body(), StandardCharsets.UTF_8);
 
     if (resp.statusCode() / 100 != 2) {
@@ -134,7 +142,6 @@ public class IngestTaskWorker {
     byte[] footerBytes = footer.getBytes(StandardCharsets.UTF_8);
 
     byte[] out = new byte[headerBytes.length + fileBytes.length + footerBytes.length];
-
     System.arraycopy(headerBytes, 0, out, 0, headerBytes.length);
     System.arraycopy(fileBytes, 0, out, headerBytes.length, fileBytes.length);
     System.arraycopy(footerBytes, 0, out, headerBytes.length + fileBytes.length, footerBytes.length);

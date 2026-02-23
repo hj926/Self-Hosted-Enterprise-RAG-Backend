@@ -26,10 +26,26 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
 
   @Override
   protected boolean shouldNotFilter(HttpServletRequest request) {
-    String path = request.getRequestURI();
-    if (path == null)
-      return false;
-    return path.startsWith("/actuator/") || path.equals("/health") || path.equals("/api/v1/health");
+    String uri = request.getRequestURI();
+    String sp = request.getServletPath();
+
+    String path = (uri != null && !uri.isBlank()) ? uri : (sp == null ? "" : sp);
+
+    if (path.startsWith("/actuator/") || path.equals("/health") || path.equals("/api/v1/health")) {
+      return true;
+    }
+
+    if (path.contains("/v3/api-docs"))
+      return true;
+    if (path.contains("/swagger-ui"))
+      return true;
+    if (path.startsWith("/webjars/"))
+      return true;
+
+    if (path.equals("/favicon.ico"))
+      return true;
+
+    return false;
   }
 
   @Override
